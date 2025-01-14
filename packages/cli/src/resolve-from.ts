@@ -1,10 +1,10 @@
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import Module = require('module');
-import fs from 'fs';
 
 export const resolveFrom = (
 	fromDirectory: string,
-	moduleId: string
+	moduleId: string,
 ): string => {
 	try {
 		fromDirectory = fs.realpathSync(fromDirectory);

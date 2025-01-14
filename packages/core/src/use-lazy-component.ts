@@ -1,30 +1,43 @@
+import type {
+	ComponentPropsWithRef,
+	ComponentType,
+	ExoticComponent,
+} from 'react';
 import React, {useMemo} from 'react';
-import {LooseAnyComponent} from './any-component';
-import {CompProps} from './internals';
+import type {CompProps} from './Composition.js';
+
+type LazyExoticComponent<T extends ComponentType<any>> = ExoticComponent<
+	ComponentPropsWithRef<T>
+> & {
+	readonly _result: T;
+};
 
 // Expected, it can be any component props
-export const useLazyComponent = <T>(
-	compProps: CompProps<T>
-): React.LazyExoticComponent<LooseAnyComponent<T>> => {
+export const useLazyComponent = <Props>(
+	compProps: CompProps<Props>,
+): LazyExoticComponent<ComponentType<Props>> => {
 	const lazy = useMemo(() => {
-		if ('lazyComponent' in compProps) {
+		if (
+			'lazyComponent' in compProps &&
+			typeof compProps.lazyComponent !== 'undefined'
+		) {
 			return React.lazy(
 				compProps.lazyComponent as () => Promise<{
-					default: LooseAnyComponent<T>;
-				}>
+					default: ComponentType<Props>;
+				}>,
 			);
 		}
 
 		if ('component' in compProps) {
 			// In SSR, suspense is not yet supported, we cannot use React.lazy
 			if (typeof document === 'undefined') {
-				return (compProps.component as unknown) as React.LazyExoticComponent<
-					LooseAnyComponent<T>
+				return compProps.component as unknown as React.LazyExoticComponent<
+					ComponentType<Props>
 				>;
 			}
 
 			return React.lazy(() =>
-				Promise.resolve({default: compProps.component as LooseAnyComponent<T>})
+				Promise.resolve({default: compProps.component as ComponentType<Props>}),
 			);
 		}
 

@@ -1,45 +1,75 @@
-import puppeteer from 'puppeteer-core';
-import {ImageFormat} from 'remotion';
+import type {Page} from './browser/BrowserPage';
+import type {StillImageFormat} from './image-format';
+import {puppeteerEvaluateWithCatch} from './puppeteer-evaluate';
 import {screenshot} from './puppeteer-screenshot';
 
 export const screenshotDOMElement = async ({
 	page,
 	imageFormat,
-	quality,
-	opts = {},
+	jpegQuality,
+	opts,
+	height,
+	width,
+	timeoutInMilliseconds,
+	scale,
 }: {
-	page: puppeteer.Page;
-	imageFormat: ImageFormat;
-	quality: number | undefined;
-	opts?: {
-		path?: string;
-		selector?: string;
+	page: Page;
+	imageFormat: StillImageFormat;
+	jpegQuality: number | undefined;
+	opts: {
+		path: string | null;
 	};
+	height: number;
+	width: number;
+	timeoutInMilliseconds: number;
+	scale: number;
 }): Promise<Buffer> => {
-	const path = 'path' in opts ? opts.path : null;
-	const {selector} = opts;
+	const {path} = opts;
 
-	if (!selector) throw Error('Please provide a selector.');
-	if (!path) throw Error('Please provide a path.');
-
-	if (imageFormat === 'png') {
-		await page.evaluate(() => {
-			document.body.style.background = 'transparent';
+	if (
+		imageFormat === 'png' ||
+		imageFormat === 'pdf' ||
+		imageFormat === 'webp'
+	) {
+		await puppeteerEvaluateWithCatch({
+			pageFunction: () => {
+				document.body.style.background = 'transparent';
+			},
+			args: [],
+			frame: null,
+			page,
+			timeoutInMilliseconds,
 		});
 	} else {
-		await page.evaluate(() => {
-			document.body.style.background = 'black';
+		await puppeteerEvaluateWithCatch({
+			pageFunction: () => {
+				document.body.style.background = 'black';
+			},
+			args: [],
+			frame: null,
+			page,
+			timeoutInMilliseconds,
 		});
 	}
 
+	// @ts-expect-error
 	if (imageFormat === 'none') {
 		throw new TypeError('Tried to make a screenshot with format "none"');
 	}
 
-	return screenshot(page, {
+	const buf = await screenshot({
+		page,
 		omitBackground: imageFormat === 'png',
-		path,
+		path: path ?? undefined,
 		type: imageFormat,
-		quality,
-	}) as Promise<Buffer>;
+		jpegQuality,
+		width,
+		height,
+		scale,
+	});
+	if (typeof buf === 'string') {
+		throw new TypeError('Expected a buffer');
+	}
+
+	return buf;
 };

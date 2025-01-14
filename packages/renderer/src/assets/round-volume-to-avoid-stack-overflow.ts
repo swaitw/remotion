@@ -7,13 +7,13 @@
 // We then subtract 1 again because FFMPEG is not precise and queries out of range
 // values, for which we have to provide a default
 
-export const MAX_FFMPEG_STACK_DEPTH = 98;
+const MAX_FFMPEG_STACK_DEPTH = 98;
 
 export const roundVolumeToAvoidStackOverflow = (volume: number): number => {
 	return Number(
 		(
 			Math.round(volume * (MAX_FFMPEG_STACK_DEPTH - 1)) /
 			(MAX_FFMPEG_STACK_DEPTH - 1)
-		).toFixed(3)
+		).toFixed(3),
 	);
 };

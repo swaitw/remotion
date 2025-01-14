@@ -1,14 +1,12 @@
 import React from "react";
 
 export const ExperimentalBadge: React.FC<{
-  message?: string;
-}> = ({
-  message = "This component may change in minor version updates. Monitor the documentation page to see breaking changes when upgrading.",
-}) => {
+  readonly children: React.ReactNode;
+}> = ({ children }) => {
   return (
     <div
       style={{
-        backgroundColor: "rgba(246, 229, 141,0.3)",
+        backgroundColor: "rgba(246, 229, 141, 0.3)",
         borderRadius: 8,
         padding: "12px 12px",
         marginBottom: 24,
@@ -28,7 +26,7 @@ export const ExperimentalBadge: React.FC<{
       >
         EXPERIMENTAL
       </div>
-      <div>{message}</div>
+      <div>{children}</div>
     </div>
   );
 };

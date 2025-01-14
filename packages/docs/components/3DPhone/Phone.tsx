@@ -1,7 +1,8 @@
+/* eslint-disable react/no-unknown-property */
 import {useThree} from '@react-three/fiber';
 import React, {useEffect, useMemo} from 'react';
 import {interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
-import {VideoTexture} from 'three';
+import type {VideoTexture} from 'three';
 import {
 	CAMERA_DISTANCE,
 	getPhoneLayout,
@@ -13,16 +14,16 @@ import {roundedRect} from './helpers/rounded-rectangle';
 import {RoundedBox} from './RoundedBox';
 
 export const Phone: React.FC<{
-	videoTexture: VideoTexture | null;
-	aspectRatio: number;
-	baseScale: number;
+	readonly videoTexture: VideoTexture | null;
+	readonly aspectRatio: number;
+	readonly baseScale: number;
 }> = ({aspectRatio, videoTexture, baseScale}) => {
 	const frame = useCurrentFrame();
 	const {fps, durationInFrames} = useVideoConfig();
 
 	const layout = useMemo(
 		() => getPhoneLayout(aspectRatio, baseScale),
-		[aspectRatio, baseScale]
+		[aspectRatio, baseScale],
 	);
 
 	// Place a camera and set the distance to the object.
@@ -48,7 +49,7 @@ export const Phone: React.FC<{
 	const constantRotation = interpolate(
 		frame,
 		[0, durationInFrames],
-		[0, Math.PI * 6]
+		[0, Math.PI * 6],
 	);
 
 	// When the composition starts, there is some extra
@@ -67,7 +68,7 @@ export const Phone: React.FC<{
 	const entranceRotation = interpolate(
 		entranceAnimation,
 		[0, 1],
-		[-Math.PI, Math.PI]
+		[-Math.PI, Math.PI],
 	);
 
 	// Calculating the total rotation of the phone
@@ -104,9 +105,7 @@ export const Phone: React.FC<{
 			</RoundedBox>
 			<mesh position={layout.screen.position}>
 				<shapeGeometry args={[screenGeometry]} />
-				{videoTexture ? (
-					<meshBasicMaterial morphTargets map={videoTexture} />
-				) : null}
+				{videoTexture ? <meshBasicMaterial map={videoTexture} /> : null}
 			</mesh>
 		</group>
 	);

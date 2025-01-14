@@ -1,75 +1,118 @@
-import path from 'path';
-import {Internals, WebpackConfiguration, WebpackOverrideFn} from 'remotion';
+import {createHash} from 'node:crypto';
+import ReactDOM from 'react-dom';
 import webpack, {ProgressPlugin} from 'webpack';
+import type {LoaderOptions} from './esbuild-loader/interfaces';
 import {ReactFreshWebpackPlugin} from './fast-refresh';
+import {jsonStringifyWithCircularReferences} from './stringify-with-circular-references';
 import {getWebpackCacheName} from './webpack-cache';
+import esbuild = require('esbuild');
+
+import {NoReactInternals} from 'remotion/no-react';
+import type {Configuration} from 'webpack';
+import {CaseSensitivePathsPlugin} from './case-sensitive-paths';
+import {AllowDependencyExpressionPlugin} from './hide-expression-dependency';
+import {AllowOptionalDependenciesPlugin} from './optional-dependencies';
+export type WebpackConfiguration = Configuration;
+
+export type WebpackOverrideFn = (
+	currentConfiguration: WebpackConfiguration,
+) => WebpackConfiguration | Promise<WebpackConfiguration>;
+
+if (!ReactDOM?.version) {
+	throw new Error('Could not find "react-dom" package. Did you install it?');
+}
+
+const reactDomVersion = ReactDOM.version.split('.')[0];
+if (reactDomVersion === '0') {
+	throw new Error(
+		`Version ${reactDomVersion} of "react-dom" is not supported by Remotion`,
+	);
+}
+
+const shouldUseReactDomClient = NoReactInternals.ENABLE_V5_BREAKING_CHANGES
+	? true
+	: parseInt(reactDomVersion, 10) >= 18;
 
 type Truthy<T> = T extends false | '' | 0 | null | undefined ? never : T;
+
 function truthy<T>(value: T): value is Truthy<T> {
 	return Boolean(value);
 }
 
-export const webpackConfig = ({
+export const webpackConfig = async ({
 	entry,
 	userDefinedComponent,
 	outDir,
 	environment,
 	webpackOverride = (f) => f,
-	onProgressUpdate,
-	enableCaching = Internals.DEFAULT_WEBPACK_CACHE_ENABLED,
-	inputProps,
-	envVariables,
+	onProgress,
+	enableCaching = true,
 	maxTimelineTracks,
+	remotionRoot,
+	keyboardShortcutsEnabled,
+	bufferStateDelayInMilliseconds,
+	poll,
 }: {
 	entry: string;
 	userDefinedComponent: string;
-	outDir: string;
+	outDir: string | null;
 	environment: 'development' | 'production';
-	webpackOverride?: WebpackOverrideFn;
-	onProgressUpdate?: (f: number) => void;
+	webpackOverride: WebpackOverrideFn;
+	onProgress?: (f: number) => void;
 	enableCaching?: boolean;
-	inputProps?: object;
-	envVariables?: Record<string, string>;
-	maxTimelineTracks: number;
-}): WebpackConfiguration => {
-	return webpackOverride({
+	maxTimelineTracks: number | null;
+	keyboardShortcutsEnabled: boolean;
+	bufferStateDelayInMilliseconds: number | null;
+	remotionRoot: string;
+	poll: number | null;
+}): Promise<[string, WebpackConfiguration]> => {
+	const esbuildLoaderOptions: LoaderOptions = {
+		target: 'chrome85',
+		loader: 'tsx',
+		implementation: esbuild,
+		remotionRoot,
+	};
+
+	let lastProgress = 0;
+
+	const isBun = typeof Bun !== 'undefined';
+
+	const define = new webpack.DefinePlugin({
+		'process.env.MAX_TIMELINE_TRACKS': maxTimelineTracks,
+		'process.env.KEYBOARD_SHORTCUTS_ENABLED': keyboardShortcutsEnabled,
+		'process.env.BUFFER_STATE_DELAY_IN_MILLISECONDS':
+			bufferStateDelayInMilliseconds,
+	});
+
+	const conf: WebpackConfiguration = await webpackOverride({
 		optimization: {
 			minimize: false,
 		},
 		experiments: {
-			lazyCompilation:
-				environment === 'production'
+			lazyCompilation: isBun
+				? false
+				: environment === 'production'
 					? false
 					: {
 							entries: false,
-					  },
+						},
 		},
 		watchOptions: {
+			poll: poll ?? undefined,
 			aggregateTimeout: 0,
-			ignored: ['**/.git/**', '**/node_modules/**'],
+			ignored: ['**/.git/**', '**/.turbo/**', '**/node_modules/**'],
 		},
-		cache: enableCaching
-			? {
-					type: 'filesystem',
-					name: getWebpackCacheName(environment, inputProps ?? {}),
-			  }
-			: false,
+		// Higher source map quality in development to power line numbers for stack traces
 		devtool:
-			environment === 'development'
-				? 'cheap-module-source-map'
-				: 'cheap-module-source-map',
+			environment === 'development' ? 'source-map' : 'cheap-module-source-map',
 		entry: [
-			require.resolve('./setup-environment'),
-			environment === 'development'
-				? require.resolve('./hot-middleware/client')
-				: null,
+			// Fast Refresh must come first,
+			// because setup-environment imports ReactDOM.
+			// If React DOM is imported before Fast Refresh, Fast Refresh does not work
 			environment === 'development'
 				? require.resolve('./fast-refresh/runtime.js')
 				: null,
-			environment === 'development'
-				? require.resolve('./error-overlay/entry-basic.js')
-				: null,
-
+			require.resolve('./setup-environment'),
 			userDefinedComponent,
 			require.resolve('../react-shim.js'),
 			entry,
@@ -79,41 +122,45 @@ export const webpackConfig = ({
 			environment === 'development'
 				? [
 						new ReactFreshWebpackPlugin(),
+						new CaseSensitivePathsPlugin(),
 						new webpack.HotModuleReplacementPlugin(),
-						new webpack.DefinePlugin({
-							'process.env.MAX_TIMELINE_TRACKS': maxTimelineTracks,
-							'process.env.INPUT_PROPS': JSON.stringify(inputProps ?? {}),
-							[`process.env.${Internals.ENV_VARIABLES_ENV_NAME}`]:
-								JSON.stringify(envVariables ?? {}),
-						}),
-				  ]
+						define,
+						new AllowOptionalDependenciesPlugin(),
+						new AllowDependencyExpressionPlugin(),
+					]
 				: [
 						new ProgressPlugin((p) => {
-							if (onProgressUpdate) {
-								onProgressUpdate(Number((p * 100).toFixed(2)));
+							if (onProgress) {
+								if ((p === 1 && p > lastProgress) || p - lastProgress > 0.05) {
+									lastProgress = p;
+									onProgress(Number((p * 100).toFixed(2)));
+								}
 							}
 						}),
-				  ],
+						define,
+						new AllowOptionalDependenciesPlugin(),
+						new AllowDependencyExpressionPlugin(),
+					],
 		output: {
 			hashFunction: 'xxhash64',
-			globalObject: 'this',
-			filename: 'bundle.js',
-			path: outDir,
+			filename: NoReactInternals.bundleName,
 			devtoolModuleFilenameTemplate: '[resource-path]',
-		},
-		devServer: {
-			contentBase: path.resolve(__dirname, '..', 'web'),
-			historyApiFallback: true,
-			hot: true,
+			assetModuleFilename:
+				environment === 'development' ? '[path][name][ext]' : '[hash][ext]',
 		},
 		resolve: {
-			extensions: ['.ts', '.tsx', '.js', '.jsx'],
+			extensions: ['.ts', '.tsx', '.web.js', '.js', '.jsx'],
 			alias: {
 				// Only one version of react
 				'react/jsx-runtime': require.resolve('react/jsx-runtime'),
+				'react/jsx-dev-runtime': require.resolve('react/jsx-dev-runtime'),
 				react: require.resolve('react'),
+				'react-dom/client': shouldUseReactDomClient
+					? require.resolve('react-dom/client')
+					: require.resolve('react-dom'),
+				// Note: Order matters here! "remotion/no-react" must be matched before "remotion"
+				'remotion/no-react': require.resolve('remotion/no-react'),
 				remotion: require.resolve('remotion'),
-				'react-native$': 'react-native-web',
 			},
 		},
 		module: {
@@ -121,86 +168,68 @@ export const webpackConfig = ({
 				{
 					test: /\.css$/i,
 					use: [require.resolve('style-loader'), require.resolve('css-loader')],
+					type: 'javascript/auto',
 				},
 				{
-					test: /\.(png|svg|jpg|jpeg|webp|gif|bmp|webm|mp4|mp3|m4a|wav|aac)$/,
-					use: [
-						{
-							loader: require.resolve('file-loader'),
-							options: {
-								// default md4 not available in node17
-								hashType: 'md5',
-								// So you can do require('hi.png')
-								// instead of require('hi.png').default
-								esModule: false,
-								name: () => {
-									// Don't rename files in development
-									// so we can show the filename in the timeline
-									if (environment === 'development') {
-										return '[path][name].[ext]';
-									}
-
-									return '[md5:contenthash].[ext]';
-								},
-							},
-						},
-					],
+					test: /\.(png|svg|jpg|jpeg|webp|gif|bmp|webm|mp4|mov|mp3|m4a|wav|aac)$/,
+					type: 'asset/resource',
 				},
 				{
 					test: /\.tsx?$/,
 					use: [
 						{
-							loader: require.resolve('esbuild-loader'),
-							options: {
-								loader: 'tsx',
-								target: 'chrome85',
-							},
+							loader: require.resolve('./esbuild-loader/index.js'),
+							options: esbuildLoaderOptions,
 						},
+						// Keep the order to match babel-loader
 						environment === 'development'
 							? {
 									loader: require.resolve('./fast-refresh/loader.js'),
-							  }
+								}
 							: null,
 					].filter(truthy),
 				},
 				{
 					test: /\.(woff(2)?|otf|ttf|eot)(\?v=\d+\.\d+\.\d+)?$/,
-					use: [
-						{
-							loader: require.resolve('file-loader'),
-							options: {
-								// default md4 not available in node17
-								name: '[name].[ext]',
-								outputPath: 'fonts/',
-							},
-						},
-					],
+					type: 'asset/resource',
 				},
 				{
 					test: /\.jsx?$/,
 					exclude: /node_modules/,
 					use: [
 						{
-							loader: require.resolve('esbuild-loader'),
-							options: {
-								loader: 'jsx',
-								target: 'chrome85',
-							},
+							loader: require.resolve('./esbuild-loader/index.js'),
+							options: esbuildLoaderOptions,
 						},
 						environment === 'development'
 							? {
 									loader: require.resolve('./fast-refresh/loader.js'),
-							  }
+								}
 							: null,
 					].filter(truthy),
 				},
-				{
-					test: /\.js$/,
-					enforce: 'pre',
-					use: [require.resolve('source-map-loader')],
-				},
 			],
 		},
-		ignoreWarnings: [/Failed to parse source map/],
 	});
+	const hash = createHash('md5')
+		.update(jsonStringifyWithCircularReferences(conf))
+		.digest('hex');
+	return [
+		hash,
+		{
+			...conf,
+			cache: enableCaching
+				? {
+						type: 'filesystem',
+						name: getWebpackCacheName(environment, hash),
+						version: hash,
+					}
+				: false,
+			output: {
+				...conf.output,
+				...(outDir ? {path: outDir} : {}),
+			},
+			context: remotionRoot,
+		},
+	];
 };

@@ -1,155 +1,166 @@
-import {
-	getCompositions,
-	RenderInternals,
-	renderStill,
-} from '@remotion/renderer';
-import chalk from 'chalk';
-import {mkdirSync} from 'fs';
-import path from 'path';
-import {Config, Internals} from 'remotion';
+import type {ChromiumOptions, LogLevel} from '@remotion/renderer';
+import {BrowserSafeApis} from '@remotion/renderer/client';
+import {NoReactInternals} from 'remotion/no-react';
+import {registerCleanupJob} from './cleanup-before-quit';
+import {getRendererPortFromConfigFileAndCliFlag} from './config/preview-server';
+import {convertEntryPointToServeUrl} from './convert-entry-point-to-serve-url';
+import {findEntryPoint} from './entry-point';
 import {getCliOptions} from './get-cli-options';
-import {getCompositionId} from './get-composition-id';
-import {handleCommonError} from './handle-common-errors';
-import {initializeRenderCli} from './initialize-render-cli';
 import {Log} from './log';
-import {parsedCli} from './parse-command-line';
-import {createProgressBar, makeRenderingProgress} from './progress-bar';
-import {bundleOnCli} from './setup-cache';
-import {getUserPassedOutputLocation} from './user-passed-output-location';
+import {parsedCli} from './parsed-cli';
+import {renderStillFlow} from './render-flows/still';
 
-export const still = async () => {
-	const startTime = Date.now();
-	const file = parsedCli._[1];
-	const fullPath = path.join(process.cwd(), file);
+const {
+	offthreadVideoCacheSizeInBytesOption,
+	scaleOption,
+	jpegQualityOption,
+	enableMultiprocessOnLinuxOption,
+	glOption,
+	delayRenderTimeoutInMillisecondsOption,
+	headlessOption,
+	overwriteOption,
+	binariesDirectoryOption,
+	publicPathOption,
+	publicDirOption,
+	chromeModeOption,
+} = BrowserSafeApis.options;
 
-	initializeRenderCli('still');
-
-	const userOutput = path.resolve(process.cwd(), getUserPassedOutputLocation());
-
-	if (userOutput.endsWith('.jpeg') || userOutput.endsWith('.jpg')) {
-		Log.verbose(
-			'Output file has a JPEG extension, therefore setting the image format to JPEG.'
-		);
-		Config.Rendering.setImageFormat('jpeg');
-	}
-
-	if (userOutput.endsWith('.png')) {
-		Log.verbose(
-			'Output file has a PNG extension, therefore setting the image format to PNG.'
-		);
-		Config.Rendering.setImageFormat('png');
-	}
-
+export const still = async (
+	remotionRoot: string,
+	args: string[],
+	logLevel: LogLevel,
+) => {
 	const {
-		inputProps,
-		envVariables,
-		quality,
-		browser,
-		imageFormat,
-		stillFrame,
-		browserExecutable,
-	} = await getCliOptions('still');
+		file,
+		remainingArgs,
+		reason: entryPointReason,
+	} = findEntryPoint({args, remotionRoot, logLevel, allowDirectory: true});
 
-	if (imageFormat === 'none') {
+	if (!file) {
 		Log.error(
-			'No image format was selected - this is probably an error in Remotion - please post your command on Github Issues for help.'
+			{indent: false, logLevel},
+			'No entry point specified. Pass more arguments:',
+		);
+		Log.error(
+			{indent: false, logLevel},
+			'   npx remotion render [entry-point] [composition-name] [out-name]',
+		);
+		Log.error(
+			{indent: false, logLevel},
+			'Documentation: https://www.remotion.dev/docs/render',
 		);
 		process.exit(1);
 	}
 
-	if (imageFormat === 'png' && !userOutput.endsWith('.png')) {
-		Log.warn(
-			`Rendering a PNG, expected a .png extension but got ${userOutput}`
+	const fullEntryPoint = convertEntryPointToServeUrl(file);
+
+	if (parsedCli.frames) {
+		Log.error(
+			{indent: false, logLevel},
+			'--frames flag was passed to the `still` command. This flag only works with the `render` command. Did you mean `--frame`? See reference: https://www.remotion.dev/docs/cli/',
 		);
+		process.exit(1);
 	}
 
-	if (
-		imageFormat === 'jpeg' &&
-		!userOutput.endsWith('.jpg') &&
-		!userOutput.endsWith('.jpeg')
-	) {
-		Log.warn(
-			`Rendering a JPEG, expected a .jpg or .jpeg extension but got ${userOutput}`
-		);
-	}
-
-	const browserInstance = RenderInternals.openBrowser(browser, {
+	const {
 		browserExecutable,
-		shouldDumpIo: Internals.Logging.isEqualOrBelowLogLevel('verbose'),
-	});
-
-	mkdirSync(path.join(userOutput, '..'), {
-		recursive: true,
-	});
-
-	const steps = 2;
-
-	const bundled = await bundleOnCli(fullPath, steps);
-
-	const openedBrowser = await browserInstance;
-	const comps = await getCompositions(bundled, {
-		browser,
-		inputProps,
-		browserInstance: openedBrowser,
 		envVariables,
-		timeoutInMilliseconds: Internals.getCurrentPuppeteerTimeout(),
-	});
-	const compositionId = getCompositionId(comps);
-
-	const composition = comps.find((c) => c.id === compositionId);
-	if (!composition) {
-		throw new Error(`Cannot find composition with ID ${compositionId}`);
-	}
-
-	const renderProgress = createProgressBar();
-	const renderStart = Date.now();
-
-	await renderStill({
-		composition,
-		frame: stillFrame,
-		output: userOutput,
-		webpackBundle: bundled,
-		quality,
-		browser,
-		dumpBrowserLogs: Internals.Logging.isEqualOrBelowLogLevel('verbose'),
-		envVariables,
-		imageFormat,
+		height,
 		inputProps,
-		onError: (err: Error) => {
-			Log.error();
-			Log.error('The following error occured when rendering the still:');
+		stillFrame,
+		width,
+		disableWebSecurity,
+		ignoreCertificateErrors,
+		userAgent,
+	} = getCliOptions({
+		isStill: true,
+		logLevel,
+		indent: false,
+	});
 
-			handleCommonError(err);
-
-			process.exit(1);
+	const jpegQuality = jpegQualityOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+	const scale = scaleOption.getValue({commandLine: parsedCli}).value;
+	const enableMultiProcessOnLinux = enableMultiprocessOnLinuxOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+	const gl = glOption.getValue({commandLine: parsedCli}).value;
+	const offthreadVideoCacheSizeInBytes =
+		offthreadVideoCacheSizeInBytesOption.getValue({
+			commandLine: parsedCli,
+		}).value;
+	const puppeteerTimeout = delayRenderTimeoutInMillisecondsOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+	const headless = headlessOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+	const overwrite = overwriteOption.getValue(
+		{
+			commandLine: parsedCli,
 		},
-		puppeteerInstance: openedBrowser,
-		overwrite: Internals.getShouldOverwrite(),
-		timeoutInMilliseconds: Internals.getCurrentPuppeteerTimeout(),
+		true,
+	).value;
+	const binariesDirectory = binariesDirectoryOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+	const publicPath = publicPathOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+	const publicDir = publicDirOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+	const chromeMode = chromeModeOption.getValue({
+		commandLine: parsedCli,
+	}).value;
+
+	const chromiumOptions: ChromiumOptions = {
+		disableWebSecurity,
+		enableMultiProcessOnLinux,
+		gl,
+		headless,
+		ignoreCertificateErrors,
+		userAgent,
+	};
+
+	await renderStillFlow({
+		remotionRoot,
+		entryPointReason,
+		fullEntryPoint,
+		remainingArgs,
+		browser: 'chrome',
+		browserExecutable,
+		chromiumOptions,
+		envVariables,
+		height,
+		serializedInputPropsWithCustomSchema:
+			NoReactInternals.serializeJSONWithDate({
+				data: inputProps,
+				indent: undefined,
+				staticBase: null,
+			}).serializedString,
+		overwrite,
+		port: getRendererPortFromConfigFileAndCliFlag(),
+		publicDir,
+		puppeteerTimeout,
+		jpegQuality,
+		scale,
+		stillFrame,
+		width,
+		compositionIdFromUi: null,
+		imageFormatFromUi: null,
+		logLevel,
+		onProgress: () => undefined,
+		indent: false,
+		addCleanupCallback: (c) => {
+			registerCleanupJob(c);
+		},
+		cancelSignal: null,
+		outputLocationFromUi: null,
+		offthreadVideoCacheSizeInBytes,
+		binariesDirectory,
+		publicPath,
+		chromeMode,
 	});
-
-	const closeBrowserPromise = openedBrowser.close();
-	renderProgress.update(
-		makeRenderingProgress({
-			frames: 1,
-			concurrency: 1,
-			doneIn: Date.now() - renderStart,
-			steps,
-			totalFrames: 1,
-		})
-	);
-
-	Log.info(chalk.green('\nYour still frame is ready!'));
-
-	const seconds = Math.round((Date.now() - startTime) / 1000);
-	Log.info(
-		[
-			'- Total render time:',
-			seconds,
-			seconds === 1 ? 'second' : 'seconds',
-		].join(' ')
-	);
-	Log.info('-', 'Output can be found at:');
-	Log.info(chalk.cyan(`▶️ ${userOutput}`));
-	await closeBrowserPromise;
 };

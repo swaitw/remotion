@@ -1,0 +1,46 @@
+{
+	"repository": {
+		"url": "https://github.com/remotion-dev/remotion/tree/main/packages/it-tests"
+	},
+	"name": "@remotion/it-tests",
+	"version": "4.0.248",
+	"license": "SEE LICENSE IN LICENSE.md",
+	"scripts": {
+		"test": "bun test src/rendering --run",
+		"testssr": "bun test src/ssr src/bundle src/templates src/monorepo --timeout 40000",
+		"testlambda": "bun test src/lambda src/cloudrun --run",
+		"formatting": "prettier src --check"
+	},
+	"private": true,
+	"devDependencies": {
+		"@remotion/bundler": "workspace:*",
+		"@remotion/cli": "workspace:*",
+		"@remotion/lambda": "workspace:*",
+		"@remotion/cloudrun": "workspace:*",
+		"@remotion/player": "workspace:*",
+		"@remotion/preload": "workspace:*",
+		"@remotion/renderer": "workspace:*",
+		"@remotion/shapes": "workspace:*",
+		"@remotion/zod-types": "workspace:*",
+		"@remotion/noise": "workspace:*",
+		"@remotion/example-videos": "workspace:*",
+		"@remotion/motion-blur": "workspace:*",
+		"@remotion/media-utils": "workspace:*",
+		"@remotion/media-parser": "workspace:*",
+		"@remotion/lottie": "workspace:*",
+		"@remotion/layout-utils": "workspace:*",
+		"@remotion/install-whisper-cpp": "workspace:*",
+		"@remotion/captions": "workspace:*",
+		"@remotion/google-fonts": "workspace:*",
+		"@remotion/serverless": "workspace:*",
+		"@remotion/studio-server": "workspace:*",
+		"@remotion/studio-shared": "workspace:*",
+		"@remotion/transitions": "workspace:*",
+		"@remotion/webcodecs": "workspace:*",
+		"@types/sharp": "^0.28.5",
+		"create-video": "workspace:*",
+		"execa": "5.1.1",
+		"remotion": "workspace:*",
+		"sharp": "0.32.6"
+	}
+}

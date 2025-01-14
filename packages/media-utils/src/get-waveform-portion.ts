@@ -1,11 +1,15 @@
 import {getWaveformSamples} from './get-wave-form-samples';
-import {AudioData} from './types';
+import type {AudioData} from './types';
 
 type Bar = {
 	index: number;
 	amplitude: number;
 };
 
+/*
+ * @description Takes bulky waveform data (for example fetched by getAudioData()) and returns a trimmed and simplified version of it, for simpler visualization
+ * @see [Documentation](https://remotion.dev/docs/get-waveform-portion)
+ */
 export const getWaveformPortion = ({
 	audioData,
 	startTimeInSeconds,
@@ -19,16 +23,16 @@ export const getWaveformPortion = ({
 }): Bar[] => {
 	const startSample = Math.floor(
 		(startTimeInSeconds / audioData.durationInSeconds) *
-			audioData.channelWaveforms[0].length
+			audioData.channelWaveforms[0].length,
 	);
 	const endSample = Math.floor(
 		((startTimeInSeconds + durationInSeconds) / audioData.durationInSeconds) *
-			audioData.channelWaveforms[0].length
+			audioData.channelWaveforms[0].length,
 	);
 
 	return getWaveformSamples(
 		audioData.channelWaveforms[0].slice(startSample, endSample),
-		numberOfSamples
+		numberOfSamples,
 	).map((w, i) => {
 		return {
 			index: i,

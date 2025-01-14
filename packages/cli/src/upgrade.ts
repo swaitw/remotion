@@ -1,74 +1,102 @@
-import execa from 'execa';
-import fs from 'fs';
-import path from 'path';
-import {Internals} from 'remotion';
+import {RenderInternals, type LogLevel} from '@remotion/renderer';
+import {StudioServerInternals} from '@remotion/studio-server';
+import {spawn} from 'node:child_process';
+import {chalk} from './chalk';
+import {listOfRemotionPackages} from './list-of-remotion-packages';
 import {Log} from './log';
 
-const npmOrYarn = (): 'npm' | 'yarn' => {
-	const packageLockJsonFilePath = path.join(process.cwd(), 'package-lock.json');
-	const yarnLockFilePath = path.join(process.cwd(), 'yarn.lock');
+export const upgradeCommand = async ({
+	remotionRoot,
+	packageManager,
+	version,
+	logLevel,
+	args,
+}: {
+	remotionRoot: string;
+	packageManager: string | undefined;
+	version: string | undefined;
+	logLevel: LogLevel;
+	args: string[];
+}) => {
+	const {
+		dependencies,
+		devDependencies,
+		optionalDependencies,
+		peerDependencies,
+	} = StudioServerInternals.getInstalledDependencies(remotionRoot);
 
-	const npmExists = fs.existsSync(packageLockJsonFilePath);
-	const yarnExists = fs.existsSync(yarnLockFilePath);
-
-	if (npmExists && !yarnExists) {
-		return 'npm';
-	}
-
-	if (!npmExists && yarnExists) {
-		return 'yarn';
-	}
-
-	if (npmExists && yarnExists) {
-		Log.error(
-			'Found both a package-lock.json and a yarn.lock file in your project.'
+	let targetVersion: string;
+	if (version) {
+		targetVersion = version;
+		Log.info(
+			{indent: false, logLevel},
+			'Upgrading to specified version: ' + version,
 		);
-		Log.error(
-			'This can lead to bugs, delete one of the two files and settle on 1 package manager.'
+	} else {
+		targetVersion = await StudioServerInternals.getLatestRemotionVersion();
+		Log.info(
+			{indent: false, logLevel},
+			'Newest Remotion version is',
+			targetVersion,
 		);
-		Log.error('Afterwards, run this command again.');
-		process.exit(1);
 	}
 
-	Log.error('Did not find a package-lock.json or yarn.lock file.');
-	Log.error('Cannot determine how to update dependencies.');
-	Log.error('Did you run `npm install` yet?');
-	Log.error('Make sure either file exists and run this command again.');
-	process.exit(1);
-};
+	const manager = StudioServerInternals.getPackageManager(
+		remotionRoot,
+		packageManager,
+		0,
+	);
 
-export const upgrade = async () => {
-	const packageJsonFilePath = path.join(process.cwd(), 'package.json');
-	if (!fs.existsSync(packageJsonFilePath)) {
-		Log.error(
-			'Could not upgrade because no package.json could be found in your project.'
+	if (manager === 'unknown') {
+		throw new Error(
+			`No lockfile was found in your project (one of ${StudioServerInternals.lockFilePaths
+				.map((p) => p.path)
+				.join(', ')}). Install dependencies using your favorite manager!`,
 		);
-		process.exit(1);
 	}
 
-	const packageJson = require(packageJsonFilePath);
-	const dependencies = Object.keys(packageJson.dependencies);
+	const toUpgrade = listOfRemotionPackages.filter(
+		(u) =>
+			dependencies.includes(u) ||
+			devDependencies.includes(u) ||
+			optionalDependencies.includes(u) ||
+			peerDependencies.includes(u),
+	);
 
-	const tool = npmOrYarn();
+	const command = StudioServerInternals.getInstallCommand({
+		manager: manager.manager,
+		packages: toUpgrade,
+		version: targetVersion,
+		additionalArgs: args,
+	});
 
-	const toUpgrade = [
-		'@remotion/bundler',
-		'@remotion/cli',
-		'@remotion/eslint-config',
-		'@remotion/renderer',
-		'@remotion/media-utils',
-		'@remotion/babel-loader',
-		'@remotion/lambda',
-		'@remotion/three',
-		'@remotion/gif',
-		'remotion',
-	].filter((u) => dependencies.includes(u));
+	Log.info({indent: false, logLevel}, chalk.gray(`$ ${command.join(' ')}`));
 
-	const prom = execa(tool, ['upgrade', ...toUpgrade]);
-	if (Internals.Logging.isEqualOrBelowLogLevel('info')) {
-		prom.stdout?.pipe(process.stdout);
-	}
+	const task = spawn(manager.manager, command, {
+		env: {
+			...process.env,
+			ADBLOCK: '1',
+			DISABLE_OPENCOLLECTIVE: '1',
+		},
+		stdio: RenderInternals.isEqualOrBelowLogLevel(logLevel, 'info')
+			? 'inherit'
+			: 'ignore',
+	});
 
-	await prom;
-	Log.info('⏫ Remotion has been upgraded!');
+	await new Promise<void>((resolve) => {
+		task.on('close', (code) => {
+			if (code === 0) {
+				resolve();
+			} else if (RenderInternals.isEqualOrBelowLogLevel(logLevel, 'info')) {
+				throw new Error('Failed to upgrade Remotion, see logs above');
+			} else {
+				throw new Error(
+					'Failed to upgrade Remotion, run with --log=info info to see logs',
+				);
+			}
+		});
+	});
+
+	Log.info({indent: false, logLevel}, '⏫ Remotion has been upgraded!');
+	Log.info({indent: false, logLevel}, 'https://remotion.dev/changelog');
 };

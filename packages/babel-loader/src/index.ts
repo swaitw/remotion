@@ -1,4 +1,5 @@
-import {WebpackConfiguration} from 'remotion';
+import type {WebpackConfiguration} from '@remotion/bundler';
+import type {RuleSetUseItem} from 'webpack';
 
 const envPreset = [
 	require.resolve('@babel/preset-env'),
@@ -15,7 +16,7 @@ function truthy<T>(value: T): value is Truthy<T> {
 }
 
 export const replaceLoadersWithBabel = (
-	conf: WebpackConfiguration
+	conf: WebpackConfiguration,
 ): WebpackConfiguration => {
 	return {
 		...conf,
@@ -26,7 +27,8 @@ export const replaceLoadersWithBabel = (
 					return rule;
 				}
 
-				if (rule.test?.toString().includes('.tsx')) {
+				// All modules that use require.resolve need to be added to cli/src/load-config -> external array
+				if (rule && rule.test?.toString().includes('.tsx')) {
 					return {
 						test: /\.tsx?$/,
 						use: [
@@ -44,7 +46,6 @@ export const replaceLoadersWithBabel = (
 										[
 											require.resolve('@babel/preset-typescript'),
 											{
-												runtime: 'automatic',
 												isTSX: true,
 												allExtensions: true,
 											},
@@ -58,16 +59,12 @@ export const replaceLoadersWithBabel = (
 									].filter(truthy),
 								},
 							},
-							conf.mode === 'development'
-								? {
-										loader: require.resolve('./fast-refresh/loader.js'),
-								  }
-								: null,
+							(rule.use as RuleSetUseItem[])[1],
 						].filter(truthy),
 					};
 				}
 
-				if (rule.test?.toString().includes('.jsx')) {
+				if (rule && rule.test?.toString().includes('.jsx')) {
 					return {
 						test: /\.jsx?$/,
 						loader: require.resolve('babel-loader'),

@@ -1,16 +1,25 @@
 // Taken from https://github.com/facebook/react-native/blob/0b9ea60b4fee8cacc36e7160e31b91fc114dbc0d/Libraries/Animated/src/nodes/AnimatedInterpolation.js
 
-type ExtrapolateType = 'extend' | 'identity' | 'clamp';
+export type ExtrapolateType = 'extend' | 'identity' | 'clamp' | 'wrap';
+
+/**
+ * @description This function allows you to map a range of values to another with a concise syntax
+ * @see [Documentation](https://www.remotion.dev/docs/interpolate)
+ */
+
+export type EasingFunction = (input: number) => number;
+
+export type InterpolateOptions = Partial<{
+	easing: EasingFunction;
+	extrapolateLeft: ExtrapolateType;
+	extrapolateRight: ExtrapolateType;
+}>;
 
 function interpolateFunction(
 	input: number,
 	inputRange: [number, number],
 	outputRange: [number, number],
-	options: {
-		easing: (input: number) => number;
-		extrapolateLeft: ExtrapolateType;
-		extrapolateRight: ExtrapolateType;
-	}
+	options: Required<InterpolateOptions>,
 ): number {
 	const {extrapolateLeft, extrapolateRight, easing} = options;
 
@@ -25,8 +34,11 @@ function interpolateFunction(
 
 		if (extrapolateLeft === 'clamp') {
 			result = inputMin;
+		} else if (extrapolateLeft === 'wrap') {
+			const range = inputMax - inputMin;
+			result = ((((result - inputMin) % range) + range) % range) + inputMin;
 		} else if (extrapolateLeft === 'extend') {
-			// noop
+			// Noop
 		}
 	}
 
@@ -37,8 +49,11 @@ function interpolateFunction(
 
 		if (extrapolateRight === 'clamp') {
 			result = inputMax;
+		} else if (extrapolateRight === 'wrap') {
+			const range = inputMax - inputMin;
+			result = ((((result - inputMin) % range) + range) % range) + inputMin;
 		} else if (extrapolateRight === 'extend') {
-			// noop
+			// Noop
 		}
 	}
 
@@ -73,9 +88,9 @@ function checkValidInputRange(arr: readonly number[]) {
 	for (let i = 1; i < arr.length; ++i) {
 		if (!(arr[i] > arr[i - 1])) {
 			throw new Error(
-				`inputRange must be strictly monotonically non-decreasing but got [${arr.join(
-					','
-				)}]`
+				`inputRange must be strictly monotonically increasing but got [${arr.join(
+					',',
+				)}]`,
 			);
 		}
 	}
@@ -86,28 +101,28 @@ function checkInfiniteRange(name: string, arr: readonly number[]) {
 		throw new Error(name + ' must have at least 2 elements');
 	}
 
-	for (const index in arr) {
-		if (typeof arr[index] !== 'number') {
+	for (const element of arr) {
+		if (typeof element !== 'number') {
 			throw new Error(`${name} must contain only numbers`);
 		}
 
-		if (arr[index] === -Infinity || arr[index] === Infinity) {
+		if (!Number.isFinite(element)) {
 			throw new Error(
-				`${name} must contain only finite numbers, but got [${arr.join(',')}]`
+				`${name} must contain only finite numbers, but got [${arr.join(',')}]`,
 			);
 		}
 	}
 }
 
+/*
+ * @description Allows you to map a range of values to another using a concise syntax.
+ * @see [Documentation](https://remotion.dev/docs/interpolate)
+ */
 export function interpolate(
 	input: number,
 	inputRange: readonly number[],
 	outputRange: readonly number[],
-	options?: {
-		easing?: (input: number) => number;
-		extrapolateLeft?: ExtrapolateType;
-		extrapolateRight?: ExtrapolateType;
-	}
+	options?: InterpolateOptions,
 ): number {
 	if (typeof input === 'undefined') {
 		throw new Error('input can not be undefined');
@@ -127,7 +142,7 @@ export function interpolate(
 				inputRange.length +
 				') and outputRange (' +
 				outputRange.length +
-				') must have the same length'
+				') must have the same length',
 		);
 	}
 
@@ -161,6 +176,6 @@ export function interpolate(
 			easing,
 			extrapolateLeft,
 			extrapolateRight,
-		}
+		},
 	);
 }

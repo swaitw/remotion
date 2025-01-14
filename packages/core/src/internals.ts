@@ -1,240 +1,180 @@
-import {LooseAnyComponent} from './any-component';
 import {
 	SharedAudioContext,
 	SharedAudioContextProvider,
-} from './audio/shared-audio-tags';
-import {CompProps} from './Composition';
+} from './audio/shared-audio-tags.js';
+import {useMediaStartsAt} from './audio/use-audio-frame.js';
+import {BufferingContextReact, BufferingProvider} from './buffering.js';
 import {
-	CompositionManager,
-	CompositionManagerContext,
-	RenderAssetInfo,
-	TAsset,
+	CanUseRemotionHooks,
+	CanUseRemotionHooksProvider,
+} from './CanUseRemotionHooks.js';
+import {type CompProps} from './Composition.js';
+import type {
 	TCompMetadata,
 	TComposition,
+	TRenderAsset,
 	TSequence,
-} from './CompositionManager';
-import {DEFAULT_BROWSER, getBrowser} from './config/browser';
-import {getBrowserExecutable} from './config/browser-executable';
-import {getCustomFfmpegExecutable} from './config/ffmpeg-executable';
+} from './CompositionManager.js';
+import {compositionsRef} from './CompositionManager.js';
+import type {CompositionManagerContext} from './CompositionManagerContext.js';
+import {CompositionManager} from './CompositionManagerContext.js';
+import * as CSSUtils from './default-css.js';
 import {
-	DEFAULT_CODEC,
-	getFinalOutputCodec,
-	getOutputCodecOrUndefined,
-} from './config/codec';
-import {getConcurrency} from './config/concurrency';
+	EditorPropsContext,
+	EditorPropsProvider,
+	editorPropsProviderRef,
+} from './EditorProps.js';
 import {
-	getActualCrf,
-	getDefaultCrfForCodec,
-	validateSelectedCrfAndCodecCombination,
-} from './config/crf';
-import {getDotEnvLocation} from './config/env-file';
+	addSequenceStackTraces,
+	enableSequenceStackTraces,
+} from './enable-sequence-stack-traces.js';
 import {
-	getRange,
-	setFrameRangeFromCli,
-	validateFrameRange,
-} from './config/frame-range';
+	getPreviewDomElement,
+	REMOTION_STUDIO_CONTAINER_ELEMENT,
+} from './get-preview-dom-element.js';
+import type {RemotionEnvironment} from './get-remotion-environment.js';
+import {getRemotionEnvironment} from './get-remotion-environment.js';
+import type {SerializedJSONWithCustomFields} from './input-props-serialization.js';
+import {IsPlayerContextProvider, useIsPlayer} from './is-player.js';
+import {NonceContext} from './nonce.js';
+import {portalNode} from './portal-node.js';
+import {PrefetchProvider} from './prefetch-state.js';
+import {usePreload} from './prefetch.js';
+import {getRoot, waitForRoot} from './register-root.js';
+import {RemotionRoot} from './RemotionRoot.js';
+import {RenderAssetManager} from './RenderAssetManager.js';
+import {resolveVideoConfig} from './resolve-video-config.js';
 import {
-	getUserPreferredImageFormat,
-	validateSelectedPixelFormatAndImageFormatCombination,
-} from './config/image-format';
-import {getShouldOutputImageSequence} from './config/image-sequence';
-import {INPUT_PROPS_KEY} from './config/input-props';
-import * as Logging from './config/log';
-import {getMaxTimelineTracks} from './config/max-timeline-tracks';
+	PROPS_UPDATED_EXTERNALLY,
+	ResolveCompositionConfig,
+	resolveCompositionsRef,
+	useResolvedVideoConfig,
+} from './ResolveCompositionConfig.js';
+import {SequenceContext} from './SequenceContext.js';
 import {
-	getWebpackOverrideFn,
-	WebpackOverrideFn,
-} from './config/override-webpack';
-import {getShouldOverwrite} from './config/overwrite';
-import {
-	DEFAULT_PIXEL_FORMAT,
-	getPixelFormat,
-	validateSelectedPixelFormatAndCodecCombination,
-} from './config/pixel-format';
-import {getServerPort} from './config/preview-server';
-import {
-	getProResProfile,
-	ProResProfile,
-	setProResProfile,
-	validateSelectedCodecAndProResCombination,
-} from './config/prores-profile';
-import {getQuality} from './config/quality';
-import {getStillFrame, setStillFrame} from './config/still-frame';
-import {
-	DEFAULT_WEBPACK_CACHE_ENABLED,
-	getWebpackCaching,
-} from './config/webpack-caching';
-import * as CSSUtils from './default-css';
-import {FEATURE_FLAG_FIREFOX_SUPPORT} from './feature-flags';
-import {getRemotionEnvironment, RemotionEnvironment} from './get-environment';
-import {
-	INITIAL_FRAME_LOCAL_STORAGE_KEY,
-	setupInitialFrame,
-} from './initial-frame';
-import {isAudioCodec} from './is-audio-codec';
-import * as perf from './perf';
-import {
-	getCompositionName,
-	getIsEvaluation,
-	getRoot,
-	isPlainIndex,
-} from './register-root';
-import {RemotionRoot} from './RemotionRoot';
-import {SequenceContext} from './sequencing';
-import {
-	ENV_VARIABLES_ENV_NAME,
-	ENV_VARIABLES_LOCAL_STORAGE_KEY,
-	setupEnvVariables,
-} from './setup-env-variables';
-import * as TimelineInOutPosition from './timeline-inout-position-state';
-import {
-	SetTimelineInOutContextValue,
-	TimelineInOutContextValue,
-} from './timeline-inout-position-state';
-import * as TimelinePosition from './timeline-position-state';
-import {
+	SequenceManager,
+	SequenceVisibilityToggleContext,
+} from './SequenceManager.js';
+import {setupEnvVariables} from './setup-env-variables.js';
+import type {
 	SetTimelineContextValue,
 	TimelineContextValue,
-} from './timeline-position-state';
-import {truthy} from './truthy';
-import {useLazyComponent} from './use-lazy-component';
-import {useUnsafeVideoConfig} from './use-unsafe-video-config';
-import {useVideo} from './use-video';
+} from './timeline-position-state.js';
+import * as TimelinePosition from './timeline-position-state.js';
+import {
+	persistCurrentFrame,
+	useTimelineSetFrame,
+} from './timeline-position-state.js';
+import {truthy} from './truthy.js';
+import {
+	calculateScale,
+	CurrentScaleContext,
+	PreviewSizeContext,
+} from './use-current-scale.js';
+import {useLazyComponent} from './use-lazy-component.js';
+import {useUnsafeVideoConfig} from './use-unsafe-video-config.js';
+import {useVideo} from './use-video.js';
+import {validateRenderAsset} from './validation/validate-artifact.js';
 import {
 	invalidCompositionErrorMessage,
 	isCompositionIdValid,
-} from './validation/validate-composition-id';
-import {validateDimension} from './validation/validate-dimensions';
-import {validateDurationInFrames} from './validation/validate-duration-in-frames';
-import {validateFps} from './validation/validate-fps';
-import {validateFrame} from './validation/validate-frame';
-import {validateNonNullImageFormat} from './validation/validate-image-format';
-import {validateQuality} from './validation/validate-quality';
+} from './validation/validate-composition-id.js';
+import {DurationsContextProvider} from './video/duration-state.js';
+import {isIosSafari} from './video/video-fragment.js';
+import type {
+	MediaVolumeContextValue,
+	SetMediaVolumeContextValue,
+} from './volume-position-state.js';
 import {
 	MediaVolumeContext,
-	MediaVolumeContextValue,
 	SetMediaVolumeContext,
-	SetMediaVolumeContextValue,
 	useMediaMutedState,
 	useMediaVolumeState,
-} from './volume-position-state';
+} from './volume-position-state.js';
+import type {WatchRemotionStaticFilesPayload} from './watch-static-file.js';
+import {WATCH_REMOTION_STATIC_FILES} from './watch-static-file.js';
 import {
 	RemotionContextProvider,
 	useRemotionContexts,
-} from './wrap-remotion-context';
-import * as AssetCompression from './compress-assets';
-import {
-	DEFAULT_PUPPETEER_TIMEOUT,
-	PUPPETEER_TIMEOUT_KEY,
-	setupPuppeteerTimeout,
-} from './timeout';
-import {
-	getCurrentPuppeteerTimeout,
-	setPuppeteerTimeout,
-} from './config/timeout';
-const Timeline = {...TimelinePosition, ...TimelineInOutPosition};
+} from './wrap-remotion-context.js';
 
 // Mark them as Internals so use don't assume this is public
 // API and are less likely to use it
 export const Internals = {
-	perf,
 	useUnsafeVideoConfig,
-	Timeline,
+	Timeline: TimelinePosition,
 	CompositionManager,
+	SequenceManager,
+	SequenceVisibilityToggleContext,
 	RemotionRoot,
 	useVideo,
 	getRoot,
-	getBrowserExecutable,
-	getCustomFfmpegExecutable,
-	getCompositionName,
-	getIsEvaluation,
-	getPixelFormat,
-	getConcurrency,
-	getRange,
-	getShouldOverwrite,
-	getOutputCodecOrUndefined,
-	getWebpackOverrideFn,
-	getQuality,
-	getShouldOutputImageSequence,
-	validateSelectedCrfAndCodecCombination,
-	getFinalOutputCodec,
 	useMediaVolumeState,
 	useMediaMutedState,
-	DEFAULT_CODEC,
-	DEFAULT_PIXEL_FORMAT,
-	FEATURE_FLAG_FIREFOX_SUPPORT,
-	DEFAULT_WEBPACK_CACHE_ENABLED,
-	getBrowser,
-	DEFAULT_BROWSER,
-	getDefaultCrfForCodec,
-	getActualCrf,
-	setFrameRangeFromCli,
-	getUserPreferredImageFormat,
-	validateSelectedPixelFormatAndImageFormatCombination,
-	validateSelectedPixelFormatAndCodecCombination,
-	validateFrameRange,
-	validateNonNullImageFormat,
-	getWebpackCaching,
 	useLazyComponent,
 	truthy,
-	isAudioCodec,
-	INPUT_PROPS_KEY,
-	Logging,
 	SequenceContext,
 	useRemotionContexts,
 	RemotionContextProvider,
-	isPlainIndex,
 	CSSUtils,
 	setupEnvVariables,
-	setupInitialFrame,
-	ENV_VARIABLES_ENV_NAME,
-	ENV_VARIABLES_LOCAL_STORAGE_KEY,
-	INITIAL_FRAME_LOCAL_STORAGE_KEY,
-	getDotEnvLocation,
-	getServerPort,
 	MediaVolumeContext,
 	SetMediaVolumeContext,
-	validateDurationInFrames,
-	validateFps,
-	validateDimension,
 	getRemotionEnvironment,
-	getProResProfile,
-	setProResProfile,
-	validateSelectedCodecAndProResCombination,
-	getMaxTimelineTracks,
 	SharedAudioContext,
 	SharedAudioContextProvider,
-	validateQuality,
-	validateFrame,
-	setStillFrame,
-	getStillFrame,
 	invalidCompositionErrorMessage,
 	isCompositionIdValid,
-	AssetCompression,
-	DEFAULT_PUPPETEER_TIMEOUT,
-	PUPPETEER_TIMEOUT_KEY,
-	setupPuppeteerTimeout,
-	setPuppeteerTimeout,
-	getCurrentPuppeteerTimeout,
-};
+	getPreviewDomElement,
+	compositionsRef,
+	portalNode,
+	waitForRoot,
+	CanUseRemotionHooksProvider,
+	CanUseRemotionHooks,
+	PrefetchProvider,
+	DurationsContextProvider,
+	IsPlayerContextProvider,
+	useIsPlayer,
+	EditorPropsProvider,
+	EditorPropsContext,
+	usePreload,
+	NonceContext,
+	resolveVideoConfig,
+	useResolvedVideoConfig,
+	resolveCompositionsRef,
+	ResolveCompositionConfig,
+	REMOTION_STUDIO_CONTAINER_ELEMENT,
+	RenderAssetManager,
+	persistCurrentFrame,
+	useTimelineSetFrame,
+	isIosSafari,
+	WATCH_REMOTION_STATIC_FILES,
+	addSequenceStackTraces,
+	useMediaStartsAt,
+	BufferingProvider,
+	BufferingContextReact,
+	enableSequenceStackTraces,
+	CurrentScaleContext,
+	PreviewSizeContext,
+	calculateScale,
+	editorPropsProviderRef,
+	PROPS_UPDATED_EXTERNALLY,
+	validateRenderAsset,
+} as const;
 
 export type {
-	TComposition,
-	Timeline,
-	TCompMetadata,
-	TSequence,
-	WebpackOverrideFn,
-	TAsset,
-	RenderAssetInfo,
-	TimelineContextValue,
-	SetTimelineContextValue,
-	TimelineInOutContextValue,
-	SetTimelineInOutContextValue,
-	CompProps,
 	CompositionManagerContext,
+	CompProps,
 	MediaVolumeContextValue,
-	SetMediaVolumeContextValue,
-	LooseAnyComponent,
 	RemotionEnvironment,
-	ProResProfile,
+	SerializedJSONWithCustomFields,
+	SetMediaVolumeContextValue,
+	SetTimelineContextValue,
+	TRenderAsset as TAsset,
+	TCompMetadata,
+	TComposition,
+	TimelinePosition as Timeline,
+	TimelineContextValue,
+	TSequence,
+	WatchRemotionStaticFilesPayload,
 };

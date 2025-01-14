@@ -1,4 +1,4 @@
-import path from 'path';
+import path from 'node:path';
 import {Log} from './log';
 import {
 	getDisplayNameForEditor,
@@ -11,17 +11,17 @@ import {yesOrNo} from './yesno';
 
 export const openInEditorFlow = async (projectRoot: string) => {
 	const editors = await guessEditor();
-	const [guiEditor] = editors.filter((e) => !isTerminalEditor(e));
+	const [guiEditor] = editors.filter((e) => !isTerminalEditor(e.command));
 
 	if (!guiEditor) {
 		return;
 	}
 
-	const displayName = getDisplayNameForEditor(guiEditor);
+	const displayName = getDisplayNameForEditor(guiEditor.command);
 
 	const should = await yesOrNo({
 		defaultValue: true,
-		question: `💻 Do you want to open the project in ${displayName}? (Y/n):`,
+		question: `💻 Open in ${displayName}? (Y/n):`,
 	});
 
 	if (should) {
@@ -32,7 +32,7 @@ export const openInEditorFlow = async (projectRoot: string) => {
 			vsCodeNewWindow: true,
 			lineNumber: 1,
 		});
-		if (isVsCodeDerivative(guiEditor)) {
+		if (isVsCodeDerivative(guiEditor.command)) {
 			await new Promise((resolve) => {
 				setTimeout(resolve, 1000);
 			});
@@ -44,8 +44,6 @@ export const openInEditorFlow = async (projectRoot: string) => {
 				lineNumber: 1,
 			});
 		}
-
-		Log.info(`Opened in ${displayName}.`);
 	}
 
 	Log.info();

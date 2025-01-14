@@ -1,45 +1,76 @@
 import net from 'net';
+import {createLock} from './locks';
 
-const getAvailablePort = (portToTry: number) =>
-	new Promise<number>((resolve, reject) => {
-		const server = net.createServer();
-		server.unref();
-		server.on('error', reject);
-		server.listen({port: portToTry}, () => {
-			const {port} = server.address() as net.AddressInfo;
-			server.close(() => {
-				resolve(port);
-			});
+type PortStatus = 'available' | 'unavailable';
+
+const isPortAvailableOnHost = ({
+	portToTry,
+	host,
+}: {
+	portToTry: number;
+	host: string;
+}): Promise<PortStatus> => {
+	return new Promise<PortStatus>((resolve) => {
+		let status: PortStatus = 'unavailable';
+
+		const socket = new net.Socket();
+
+		socket.on('connect', () => {
+			status = 'unavailable';
+			socket.destroy();
 		});
+
+		socket.setTimeout(3000);
+		socket.on('timeout', () => {
+			status = 'unavailable';
+			socket.destroy();
+			resolve(status);
+		});
+
+		socket.on('error', () => {
+			status = 'available';
+		});
+
+		socket.on('close', () => resolve(status));
+
+		socket.connect(portToTry, host);
 	});
-
-const portCheckSequence = function* (ports: Generator<number, void, unknown>) {
-	if (ports) {
-		yield* ports;
-	}
-
-	yield 0; // Fall back to 0 if anything else failed
 };
 
-const isPortAvailable = async (port: number) => {
-	try {
-		await getAvailablePort(port);
+export const testPortAvailableOnMultipleHosts = async ({
+	hosts,
+	port,
+}: {
+	port: number;
+	hosts: string[];
+}): Promise<PortStatus> => {
+	const results = await Promise.all(
+		hosts.map((host) => {
+			return isPortAvailableOnHost({portToTry: port, host});
+		}),
+	);
 
-		return true;
-	} catch (error) {
-		if (!['EADDRINUSE', 'EACCES'].includes((error as {code: string}).code)) {
-			throw error;
-		}
-
-		return false;
-	}
+	return results.every((r) => r === 'available') ? 'available' : 'unavailable';
 };
 
-const getPort = async (from: number, to: number) => {
+const getPort = async ({
+	from,
+	to,
+	hostsToTest,
+}: {
+	from: number;
+	to: number;
+	hostsToTest: string[];
+}) => {
 	const ports = makeRange(from, to);
 
-	for (const port of portCheckSequence(ports)) {
-		if (await isPortAvailable(port)) {
+	for (const port of ports) {
+		if (
+			(await testPortAvailableOnMultipleHosts({
+				port,
+				hosts: hostsToTest,
+			})) === 'available'
+		) {
 			return port;
 		}
 	}
@@ -47,31 +78,47 @@ const getPort = async (from: number, to: number) => {
 	throw new Error('No available ports found');
 };
 
-export const getDesiredPort = async (
-	desiredPort: number | undefined,
-	from: number,
-	to: number
-) => {
+const portLocks = createLock({timeout: 10000});
+
+export const getDesiredPort = async ({
+	desiredPort,
+	from,
+	hostsToTry,
+	to,
+}: {
+	desiredPort: number | undefined;
+	from: number;
+	to: number;
+	hostsToTry: string[];
+}) => {
+	await portLocks.waitForAllToBeDone();
+	const lockPortSelection = portLocks.lock();
+	const unlockPort = () => portLocks.unlock(lockPortSelection);
+
 	if (
 		typeof desiredPort !== 'undefined' &&
-		(await isPortAvailable(desiredPort))
+		(await testPortAvailableOnMultipleHosts({
+			port: desiredPort,
+			hosts: hostsToTry,
+		})) === 'available'
 	) {
-		return desiredPort;
+		return {port: desiredPort, unlockPort};
 	}
 
-	const actualPort = await getPort(from, to);
+	const actualPort = await getPort({from, to, hostsToTest: hostsToTry});
 
 	// If did specify a port but did not get that one, fail hard.
 	if (desiredPort && desiredPort !== actualPort) {
+		unlockPort();
 		throw new Error(
-			`You specified port ${desiredPort} to be used for the HTTP server, but it is not available. Choose a different port or remove the setting to let Remotion automatically select a free port.`
+			`You specified port ${desiredPort} to be used for the HTTP server, but it is not available. Choose a different port or remove the setting to let Remotion automatically select a free port.`,
 		);
 	}
 
-	return actualPort;
+	return {port: actualPort, unlockPort};
 };
 
-const makeRange = (from: number, to: number) => {
+const makeRange = (from: number, to: number): number[] => {
 	if (!Number.isInteger(from) || !Number.isInteger(to)) {
 		throw new TypeError('`from` and `to` must be integer numbers');
 	}
@@ -88,11 +135,7 @@ const makeRange = (from: number, to: number) => {
 		throw new RangeError('`to` must be greater than or equal to `from`');
 	}
 
-	const generator = function* (f: number, t: number) {
-		for (let port = f; port <= t; port++) {
-			yield port;
-		}
-	};
-
-	return generator(from, to);
+	return new Array(to - from + 1).fill(true).map((_, i) => {
+		return i + from;
+	});
 };

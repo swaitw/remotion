@@ -1,98 +1,313 @@
-import {Browser as PuppeteerBrowser, Page} from 'puppeteer-core';
-import {Browser, BrowserExecutable, Internals, TCompMetadata} from 'remotion';
-import {openBrowser} from './open-browser';
-import {serveStatic} from './serve-static';
+import type {VideoConfig} from 'remotion/no-react';
+import {NoReactInternals} from 'remotion/no-react';
+import type {BrowserExecutable} from './browser-executable';
+import type {BrowserLog} from './browser-log';
+import type {HeadlessBrowser} from './browser/Browser';
+import type {Page} from './browser/BrowserPage';
+import {DEFAULT_TIMEOUT} from './browser/TimeoutSettings';
+import {defaultBrowserDownloadProgress} from './browser/browser-download-progress-bar';
+import {handleJavascriptException} from './error-handling/handle-javascript-exception';
+import {findRemotionRoot} from './find-closest-package-json';
+import {getPageAndCleanupFn} from './get-browser-instance';
+import type {ChromiumOptions} from './open-browser';
+import type {ToOptions} from './options/option';
+import type {optionsMap} from './options/options-map';
+import type {RemotionServer} from './prepare-server';
+import {makeOrReuseServer} from './prepare-server';
+import {puppeteerEvaluateWithCatch} from './puppeteer-evaluate';
+import {waitForReady} from './seek-to-frame';
 import {setPropsAndEnv} from './set-props-and-env';
+import type {RequiredInputPropsInV5} from './v5-required-input-props';
 import {validatePuppeteerTimeout} from './validate-puppeteer-timeout';
+import {wrapWithErrorHandling} from './wrap-with-error-handling';
 
-type GetCompositionsConfig = {
-	browser?: Browser;
-	inputProps?: object | null;
-	envVariables?: Record<string, string>;
-	browserInstance?: PuppeteerBrowser;
-	browserExecutable?: BrowserExecutable;
-	timeoutInMilliseconds?: number;
-};
-
-const getPageAndCleanupFn = async ({
-	passedInInstance,
-	browser,
-	browserExecutable,
-}: {
-	passedInInstance: PuppeteerBrowser | undefined;
-	browser: Browser;
+type InternalGetCompositionsOptions = {
+	serializedInputPropsWithCustomSchema: string;
+	envVariables: Record<string, string>;
+	puppeteerInstance: HeadlessBrowser | undefined;
+	onBrowserLog: null | ((log: BrowserLog) => void);
 	browserExecutable: BrowserExecutable | null;
-}): Promise<{
-	cleanup: () => void;
+	chromiumOptions: ChromiumOptions;
+	port: number | null;
+	server: RemotionServer | undefined;
+	indent: boolean;
+	serveUrlOrWebpackUrl: string;
+} & ToOptions<typeof optionsMap.getCompositions>;
+
+export type GetCompositionsOptions = RequiredInputPropsInV5 & {
+	envVariables?: Record<string, string>;
+	puppeteerInstance?: HeadlessBrowser;
+	onBrowserLog?: (log: BrowserLog) => void;
+	browserExecutable?: BrowserExecutable;
+	chromiumOptions?: ChromiumOptions;
+	port?: number | null;
+} & Partial<ToOptions<typeof optionsMap.getCompositions>>;
+
+type InnerGetCompositionsParams = {
+	serializedInputPropsWithCustomSchema: string;
+	envVariables: Record<string, string>;
+	onBrowserLog: null | ((log: BrowserLog) => void);
+	serveUrl: string;
 	page: Page;
-}> => {
-	if (passedInInstance) {
-		const page = await passedInInstance.newPage();
-		return {
-			page,
-			cleanup: () => {
-				// Close puppeteer page and don't wait for it to finish.
-				// Keep browser open.
-				page.close().catch((err) => {
-					console.error('Was not able to close puppeteer page', err);
-				});
-			},
-		};
+	proxyPort: number;
+	indent: boolean;
+} & ToOptions<typeof optionsMap.getCompositions>;
+
+const innerGetCompositions = async ({
+	envVariables,
+	serializedInputPropsWithCustomSchema,
+	onBrowserLog,
+	page,
+	proxyPort,
+	serveUrl,
+	timeoutInMilliseconds,
+	indent,
+	logLevel,
+}: InnerGetCompositionsParams): Promise<VideoConfig[]> => {
+	if (onBrowserLog) {
+		page.on('console', (log) => {
+			onBrowserLog({
+				stackTrace: log.stackTrace(),
+				text: log.text,
+				type: log.type,
+			});
+		});
 	}
 
-	const browserInstance = await openBrowser(
-		browser || Internals.DEFAULT_BROWSER,
-		{
-			browserExecutable,
-		}
-	);
-	const browserPage = await browserInstance.newPage();
-
-	return {
-		page: browserPage,
-		cleanup: () => {
-			// Close whole browser that was just created and don't wait for it to finish.
-			browserInstance.close().catch((err) => {
-				console.error('Was not able to close puppeteer page', err);
-			});
-		},
-	};
-};
-
-export const getCompositions = async (
-	webpackBundle: string,
-	config?: GetCompositionsConfig
-): Promise<TCompMetadata[]> => {
-	validatePuppeteerTimeout(config?.timeoutInMilliseconds);
-	const {page, cleanup} = await getPageAndCleanupFn({
-		passedInInstance: config?.browserInstance,
-		browser: config?.browser ?? Internals.DEFAULT_BROWSER,
-		browserExecutable: config?.browserExecutable ?? null,
-	});
-
-	const {port, close} = await serveStatic(webpackBundle);
-	page.on('error', console.error);
-	page.on('pageerror', console.error);
+	validatePuppeteerTimeout(timeoutInMilliseconds);
 
 	await setPropsAndEnv({
-		inputProps: config?.inputProps,
-		envVariables: config?.envVariables,
+		serializedInputPropsWithCustomSchema,
+		envVariables,
 		page,
-		port,
+		serveUrl,
 		initialFrame: 0,
-		timeoutInMilliseconds: config?.timeoutInMilliseconds,
+		timeoutInMilliseconds,
+		proxyPort,
+		retriesRemaining: 2,
+		audioEnabled: false,
+		videoEnabled: false,
+		indent,
+		logLevel,
+		onServeUrlVisited: () => undefined,
 	});
 
-	await page.goto(`http://localhost:${port}/index.html?evaluation=true`);
-	await page.waitForFunction('window.ready === true');
-	const result = await page.evaluate('window.getStaticCompositions()');
-
-	// Close web server and don't wait for it to finish,
-	// it is slow.
-	close().catch((err) => {
-		console.error('Was not able to close web server', err);
+	await puppeteerEvaluateWithCatch({
+		page,
+		pageFunction: () => {
+			window.remotion_setBundleMode({
+				type: 'evaluation',
+			});
+		},
+		frame: null,
+		args: [],
+		timeoutInMilliseconds,
 	});
-	cleanup();
 
-	return result as TCompMetadata[];
+	await waitForReady({
+		page,
+		timeoutInMilliseconds,
+		frame: null,
+		indent,
+		logLevel,
+	});
+	const {value: result} = await puppeteerEvaluateWithCatch({
+		pageFunction: () => {
+			return window.getStaticCompositions();
+		},
+		frame: null,
+		page,
+		args: [],
+		timeoutInMilliseconds,
+	});
+
+	const res = result as Awaited<
+		ReturnType<typeof window.getStaticCompositions>
+	>;
+
+	return res.map((r) => {
+		const {width, durationInFrames, fps, height, id, defaultCodec} = r;
+
+		return {
+			id,
+			width,
+			height,
+			fps,
+			durationInFrames,
+			props: NoReactInternals.deserializeJSONWithCustomFields(
+				r.serializedResolvedPropsWithCustomSchema,
+			),
+			defaultProps: NoReactInternals.deserializeJSONWithCustomFields(
+				r.serializedDefaultPropsWithCustomSchema,
+			),
+			defaultCodec,
+		};
+	});
+};
+
+type CleanupFn = () => Promise<unknown>;
+
+const internalGetCompositionsRaw = async ({
+	browserExecutable,
+	chromiumOptions,
+	envVariables,
+	indent,
+	serializedInputPropsWithCustomSchema,
+	onBrowserLog,
+	port,
+	puppeteerInstance,
+	serveUrlOrWebpackUrl,
+	server,
+	timeoutInMilliseconds,
+	logLevel,
+	offthreadVideoCacheSizeInBytes,
+	binariesDirectory,
+	onBrowserDownload,
+	chromeMode,
+}: InternalGetCompositionsOptions) => {
+	const {page, cleanupPage} = await getPageAndCleanupFn({
+		passedInInstance: puppeteerInstance,
+		browserExecutable,
+		chromiumOptions,
+		forceDeviceScaleFactor: undefined,
+		indent,
+		logLevel,
+		onBrowserDownload,
+		chromeMode,
+	});
+
+	const cleanup: CleanupFn[] = [cleanupPage];
+
+	return new Promise<VideoConfig[]>((resolve, reject) => {
+		const onError = (err: Error) => reject(err);
+
+		cleanup.push(
+			handleJavascriptException({
+				page,
+				frame: null,
+				onError,
+			}),
+		);
+
+		makeOrReuseServer(
+			server,
+			{
+				webpackConfigOrServeUrl: serveUrlOrWebpackUrl,
+				port,
+				remotionRoot: findRemotionRoot(),
+				concurrency: 1,
+				logLevel,
+				indent,
+				offthreadVideoCacheSizeInBytes,
+				binariesDirectory,
+				forceIPv4: false,
+			},
+			{
+				onDownload: () => undefined,
+			},
+		)
+			.then(({server: {serveUrl, offthreadPort, sourceMap}, cleanupServer}) => {
+				page.setBrowserSourceMapGetter(sourceMap);
+
+				cleanup.push(() => {
+					return cleanupServer(true);
+				});
+
+				return innerGetCompositions({
+					envVariables,
+					serializedInputPropsWithCustomSchema,
+					onBrowserLog,
+					page,
+					proxyPort: offthreadPort,
+					serveUrl,
+					timeoutInMilliseconds,
+					indent,
+					logLevel,
+					offthreadVideoCacheSizeInBytes,
+					binariesDirectory,
+					onBrowserDownload,
+					chromeMode,
+				});
+			})
+
+			.then((comp) => {
+				return resolve(comp);
+			})
+			.catch((err) => {
+				reject(err);
+			})
+			.finally(() => {
+				cleanup.forEach((c) => {
+					c();
+				});
+			});
+	});
+};
+
+export const internalGetCompositions = wrapWithErrorHandling(
+	internalGetCompositionsRaw,
+);
+
+/*
+ * @description Gets a list of compositions defined in a Remotion project based on a Remotion Bundle by evaluating the Remotion Root.
+ * @see [Documentation](https://www.remotion.dev/docs/renderer/get-compositions)
+ */
+export const getCompositions = (
+	serveUrlOrWebpackUrl: string,
+	config?: GetCompositionsOptions,
+): Promise<VideoConfig[]> => {
+	if (!serveUrlOrWebpackUrl) {
+		throw new Error(
+			'No serve URL or webpack bundle directory was passed to getCompositions().',
+		);
+	}
+
+	const {
+		browserExecutable,
+		chromiumOptions,
+		envVariables,
+		inputProps,
+		onBrowserLog,
+		port,
+		puppeteerInstance,
+		timeoutInMilliseconds,
+		logLevel: passedLogLevel,
+		onBrowserDownload,
+		binariesDirectory,
+		offthreadVideoCacheSizeInBytes,
+		chromeMode,
+	} = config ?? {};
+
+	const indent = false;
+	const logLevel = passedLogLevel ?? 'info';
+
+	return internalGetCompositions({
+		browserExecutable: browserExecutable ?? null,
+		chromiumOptions: chromiumOptions ?? {},
+		envVariables: envVariables ?? {},
+		serializedInputPropsWithCustomSchema:
+			NoReactInternals.serializeJSONWithDate({
+				data: inputProps ?? {},
+				indent: undefined,
+				staticBase: null,
+			}).serializedString,
+		indent,
+		onBrowserLog: onBrowserLog ?? null,
+		port: port ?? null,
+		puppeteerInstance: puppeteerInstance ?? undefined,
+		serveUrlOrWebpackUrl,
+		server: undefined,
+		timeoutInMilliseconds: timeoutInMilliseconds ?? DEFAULT_TIMEOUT,
+		logLevel,
+		offthreadVideoCacheSizeInBytes: offthreadVideoCacheSizeInBytes ?? null,
+		binariesDirectory: binariesDirectory ?? null,
+		onBrowserDownload:
+			onBrowserDownload ??
+			defaultBrowserDownloadProgress({
+				indent,
+				logLevel,
+				api: 'getCompositions()',
+			}),
+		chromeMode: chromeMode ?? 'headless-shell',
+	});
 };

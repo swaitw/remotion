@@ -7,7 +7,7 @@ import {
 } from 'remotion';
 
 const CarSlideshow: React.FC<{
-	title: string;
+	readonly title: string;
 }> = ({title}) => {
 	const frame = useCurrentFrame();
 	const {width, height, durationInFrames} = useVideoConfig();
@@ -15,14 +15,14 @@ const CarSlideshow: React.FC<{
 	const backGroundColor = interpolateColors(
 		frame,
 		[0, Math.floor(durationInFrames / 2), durationInFrames],
-		['red', 'hotpink', 'green']
+		['red', 'hotpink', 'green'],
 	);
 	return (
 		<div
 			style={{
 				backgroundColor: backGroundColor,
-				width: width,
-				height: height,
+				width,
+				height,
 				position: 'absolute',
 				left: 0,
 				top: 0,
